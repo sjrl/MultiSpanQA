@@ -5,10 +5,10 @@ import string
 import difflib
 import warnings
 import numpy as np
-from typing import Dict, List, Set, Literal
+from typing import Dict, List, Set, Literal, Union
 
 
-def get_entities(label, token):
+def get_entities(label: Union[List, List[List]], context: Union[List, List[List]]) -> List:
     prev_tag = 'O'
     begin_offset = 0
     chunks = []
@@ -18,21 +18,22 @@ def get_entities(label, token):
         for i, s in enumerate(label):
             if len(set(s)) == 1:
                 chunks.append(('O', -i, -i))
-    # for nested list
+    # for nested list, flatten and insert 'O'
     if any(isinstance(s, list) for s in label):
         label = [item for sublist in label for item in sublist + ['O']]
-    if any(isinstance(s, list) for s in token):
-        token = [item for sublist in token for item in sublist + ['O']]
+    if any(isinstance(s, list) for s in context):
+        context = [item for sublist in context for item in sublist + ['O']]
 
     for i, chunk in enumerate(label + ['O']):
         if chunk not in ["O", "B", "I"]:
             warnings.warn('{} seems not to be IOB tag.'.format(chunk))
         tag = chunk[0]
         if end_of_chunk(prev_tag, tag):
-            chunks.append((' '.join(token[begin_offset:i]), begin_offset, i - 1))
+            chunks.append((' '.join(context[begin_offset:i]), begin_offset, i - 1))
         if start_of_chunk(prev_tag, tag):
             begin_offset = i
         prev_tag = tag
+
     return chunks
 
 
@@ -91,8 +92,8 @@ def normalize_answer(s):
 
 
 def compute_scores(
-    golds: Dict[Set[str]],
-    preds: Dict[Set[str]],
+    golds: Dict[str, Set[str]],
+    preds: Dict[str, Set[str]],
     eval_type: Literal["em", "overlap"] = "em",
     average: str = 'micro'
 ):
@@ -170,7 +171,7 @@ def count_overlap(gold: set, pred: set):
     return precision_score, recall_score
 
 
-def read_gold(gold_file: str):
+def read_gold(gold_file: str) -> Dict[str, Set[str]]:
     """Read the gold file.
 
     :param gold_file: The file path to the file with the golden answers.
@@ -183,7 +184,7 @@ def read_gold(gold_file: str):
     return golds
 
 
-def read_pred(pred_file: str):
+def read_pred(pred_file: str) -> Dict[str, List[str]]:
     """Read the prediction file.
 
     :param pred_file: The file path to a prediction file.
@@ -205,7 +206,7 @@ def multi_span_evaluate_from_file(pred_file: str, gold_file: str):
     return result
 
 
-def multi_span_evaluate(preds: Dict[List[str]], golds: Dict[List[str]]):
+def multi_span_evaluate(preds: Dict[str, List[str]], golds: Dict[str, List[str]]):
     """Evaluate the predictions of a MultiSpan QA model.
 
     :param preds: A dictionary of predictions.

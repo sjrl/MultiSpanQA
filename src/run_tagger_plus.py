@@ -4,10 +4,9 @@ import logging
 import collections
 from tqdm.auto import tqdm
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, List, Union, Dict, Any
+from typing import Optional
 
 import torch
-import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
@@ -18,7 +17,6 @@ from datasets import load_dataset
 import transformers
 from transformers import (
     AutoConfig,
-    AutoModelForQuestionAnswering,
     AutoTokenizer,
     DataCollatorForTokenClassification,
     HfArgumentParser,
@@ -30,10 +28,8 @@ from transformers import (
     BertLayer
 )
 from transformers.trainer_utils import get_last_checkpoint
-from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 
-from trainer import QuestionAnsweringTrainer
 from eval_script import *
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/question-answering/requirements.txt")
@@ -47,38 +43,41 @@ class FocalLoss(nn.Module):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.alpha = alpha
-        if isinstance(alpha,(float,int)): self.alpha = torch.Tensor([alpha,1-alpha])
-        if isinstance(alpha,list): self.alpha = torch.Tensor(alpha)
+        if isinstance(alpha, (float, int)): self.alpha = torch.Tensor([alpha, 1 - alpha])
+        if isinstance(alpha, list): self.alpha = torch.Tensor(alpha)
         self.size_average = size_average
 
     def forward(self, input, target):
-        if input.dim()>2:
-            input = input.view(input.size(0),input.size(1),-1)  # N,C,H,W => N,C,H*W
-            input = input.transpose(1,2)    # N,C,H*W => N,H*W,C
-            input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
-        target = target.view(-1,1)
+        if input.dim() > 2:
+            input = input.view(input.size(0), input.size(1), -1)  # N,C,H,W => N,C,H*W
+            input = input.transpose(1, 2)  # N,C,H*W => N,H*W,C
+            input = input.contiguous().view(-1, input.size(2))  # N,H*W,C => N*H*W,C
+        target = target.view(-1, 1)
 
         logpt = F.log_softmax(input)
-        logpt = logpt.gather(1,target)
+        logpt = logpt.gather(1, target)
         logpt = logpt.view(-1)
         pt = Variable(logpt.data.exp())
 
         if self.alpha is not None:
-            if self.alpha.type()!=input.data.type():
+            if self.alpha.type() != input.data.type():
                 self.alpha = self.alpha.type_as(input.data)
-            at = self.alpha.gather(0,target.data.view(-1))
+            at = self.alpha.gather(0, target.data.view(-1))
             logpt = logpt * Variable(at)
 
-        loss = -1 * (1-pt)**self.gamma * logpt
-        if self.size_average: return loss.mean()
-        else: return loss.sum()
+        loss = -1 * (1 - pt) ** self.gamma * logpt
+        if self.size_average:
+            return loss.mean()
+        else:
+            return loss.sum()
+
 
 class TaggerPlusForMultiSpanQA(BertPreTrainedModel):
     def __init__(self, config, structure_lambda, span_lambda):
         super().__init__(config, structure_lambda, span_lambda)
         self.structure_lambda = structure_lambda
         self.span_lambda = span_lambda
-        self.label2id= config.label2id
+        self.label2id = config.label2id
         self.num_labels = config.num_labels
         self.max_spans = 21
         self.max_pred_spans = 30
@@ -88,23 +87,23 @@ class TaggerPlusForMultiSpanQA(BertPreTrainedModel):
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(self.H, config.num_labels)
-        self.num_span_outputs = nn.Sequential(nn.Linear(self.H, 64),nn.ReLU(),nn.Linear(64, 1))
-        self.structure_outputs = nn.Sequential(nn.Linear(self.H, 128),nn.ReLU(),nn.Linear(128, 6))
+        self.num_span_outputs = nn.Sequential(nn.Linear(self.H, 64), nn.ReLU(), nn.Linear(64, 1))
+        self.structure_outputs = nn.Sequential(nn.Linear(self.H, 128), nn.ReLU(), nn.Linear(128, 6))
 
-        config.num_attention_heads=6 # for span encoder
-        intermediate_size=1024
+        config.num_attention_heads = 6  # for span encoder
+        intermediate_size = 1024
         self.span_encoder = BertLayer(config)
 
         self.init_weights()
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        labels=None,
-        num_span=None,
-        structure=None,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            labels=None,
+            num_span=None,
+            structure=None,
     ):
 
         outputs = self.bert(
@@ -119,9 +118,9 @@ class TaggerPlusForMultiSpanQA(BertPreTrainedModel):
         logits = self.classifier(sequence_output)
 
         # gather and pool span hidden
-        B = pooled_output.size(0) # batch_size
+        B = pooled_output.size(0)  # batch_size
         pred_spans = torch.zeros((B, self.max_pred_spans, self.H)).to(logits)
-        pred_spans[:,0,:] = pooled_output # init the cls token use the bert cls token
+        pred_spans[:, 0, :] = pooled_output  # init the cls token use the bert cls token
         span_mask = torch.zeros((B, self.max_pred_spans)).to(logits)
         pred_labels = torch.argmax(logits, dim=-1)
 
@@ -129,37 +128,37 @@ class TaggerPlusForMultiSpanQA(BertPreTrainedModel):
             s_pred_labels = pred_labels[b]
             s_sequence_output = sequence_output[b]
             indexes = [[]]
-            flag=False
+            flag = False
             for i in range(len(s_pred_labels)):
-                if s_pred_labels[i] == self.label2id['B']: # B
+                if s_pred_labels[i] == self.label2id['B']:  # B
                     indexes.append([i])
-                    flag=True
-                if s_pred_labels[i] == self.label2id['I'] and flag: # I
+                    flag = True
+                if s_pred_labels[i] == self.label2id['I'] and flag:  # I
                     indexes[-1].append(i)
-                if s_pred_labels[i] == self.label2id['O']: # O
-                    flag=False
+                if s_pred_labels[i] == self.label2id['O']:  # O
+                    flag = False
             indexes = indexes[:self.max_pred_spans]
 
-            for i,index in enumerate(indexes):
+            for i, index in enumerate(indexes):
                 if i == 0:
-                    span_mask[b,i] = 1
+                    span_mask[b, i] = 1
                     continue
-                s_span = s_sequence_output[index[0]:index[-1]+1,:]
-                s_span = torch.mean(s_span, dim=0) # mean pooling
-                pred_spans[b,i,:] = s_span
-                span_mask[b,i] = 1
+                s_span = s_sequence_output[index[0]:index[-1] + 1, :]
+                s_span = torch.mean(s_span, dim=0)  # mean pooling
+                pred_spans[b, i, :] = s_span
+                span_mask[b, i] = 1
 
         # encode span
-        span_mask = span_mask[:,None,None,:] # extend for attention
+        span_mask = span_mask[:, None, None, :]  # extend for attention
         span_x = self.span_encoder(pred_spans, span_mask)[0]
-        pooled_span_cls = span_x[:,0]
+        pooled_span_cls = span_x[:, 0]
         pooled_span_cls = torch.tanh(self.dense(pooled_span_cls))
 
         num_span_logits = self.num_span_outputs(pooled_span_cls)
         structure_logits = self.structure_outputs(pooled_span_cls)
 
-        outputs = (logits, num_span_logits, ) + outputs[:]
-        if labels is not None: # for train
+        outputs = (logits, num_span_logits,) + outputs[:]
+        if labels is not None:  # for train
             loss_fct = CrossEntropyLoss()
             # Only keep active parts of the loss
             active_loss = attention_mask.view(-1) == 1
@@ -171,7 +170,7 @@ class TaggerPlusForMultiSpanQA(BertPreTrainedModel):
 
             # num_span regression
             loss_mse = MSELoss()
-            num_span=num_span.type(torch.float) / self.max_spans
+            num_span = num_span.type(torch.float) / self.max_spans
             num_span_loss = loss_mse(num_span_logits.view(-1), num_span.view(-1))
             num_span_loss *= self.span_lambda
             # structure classification
@@ -180,7 +179,7 @@ class TaggerPlusForMultiSpanQA(BertPreTrainedModel):
             structure_loss *= self.structure_lambda
             loss = loss + num_span_loss + structure_loss
 
-            outputs = (loss, ) + outputs
+            outputs = (loss,) + outputs
 
         return outputs
 
@@ -209,8 +208,8 @@ class ModelArguments:
         metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
     )
     use_auth_token: bool = field(default=False)
-    structure_lambda: float= field(default=0.02)
-    span_lambda: float= field(default=1)
+    structure_lambda: float = field(default=0.02)
+    span_lambda: float = field(default=1)
 
 
 @dataclass
@@ -249,7 +248,7 @@ class DataTrainingArguments:
         default=None,
         metadata={
             "help": "The maximum total input sequence length after tokenization. If set, sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
+                    "than this will be truncated, sequences shorter will be padded."
         },
     )
     doc_stride: int = field(
@@ -259,7 +258,7 @@ class DataTrainingArguments:
         default=False,
         metadata={
             "help": "Whether to put the label for one word on all tokens of generated by that word or just on the "
-            "one (in which case the other tokens will have a padding index)."
+                    "one (in which case the other tokens will have a padding index)."
         },
     )
     save_embeds: bool = field(
@@ -282,8 +281,8 @@ class DataTrainingArguments:
         default=False,
         metadata={
             "help": "Whether to pad all samples to model maximum sentence length. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
-            "efficient on GPU but very bad for TPU."
+                    "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
+                    "efficient on GPU but very bad for TPU."
         },
     )
 
@@ -334,9 +333,9 @@ def main():
     set_seed(training_args.seed)
 
     data_files = {'train': os.path.join(data_args.data_dir, data_args.train_file),
-                  'validation':os.path.join(data_args.data_dir, "valid.json")}
+                  'validation': os.path.join(data_args.data_dir, "valid.json")}
     if training_args.do_predict:
-                  data_files['test'] = os.path.join(data_args.data_dir, "test.json")
+        data_files['test'] = os.path.join(data_args.data_dir, "test.json")
     raw_datasets = load_dataset('json', field='data', data_files=data_files)
 
     column_names = raw_datasets["train"].column_names
@@ -481,13 +480,13 @@ def main():
                 previous_word_idx = word_idx
 
             tokenized_examples["labels"].append(label_ids)
-            tokenized_examples["num_span"].append(float(label_ids.count(0))) # count num of B as num_spans
-            tokenized_examples["structure"].append(structure_to_id[examples['structure'][sample_index] if 'structure' in examples else ''])
+            tokenized_examples["num_span"].append(float(label_ids.count(0)))  # count num of B as num_spans
+            tokenized_examples["structure"].append(
+                structure_to_id[examples['structure'][sample_index] if 'structure' in examples else ''])
             tokenized_examples["example_id"].append(examples["id"][sample_index])
             tokenized_examples["word_ids"].append(word_ids)
             tokenized_examples["sequence_ids"].append(sequence_ids)
         return tokenized_examples
-
 
     if training_args.do_train or data_args.save_embeds:
         train_examples = raw_datasets["train"]
@@ -502,7 +501,6 @@ def main():
                 load_from_cache_file=not data_args.overwrite_cache,
                 desc="Running tokenizer on train dataset",
             )
-
 
     if training_args.do_eval:
         eval_examples = raw_datasets["validation"]
@@ -537,8 +535,8 @@ def main():
     # Data collator
     data_collator = DataCollatorForTokenClassification(tokenizer)
 
-    tmp_train_dataset = train_dataset.remove_columns(["example_id","word_ids","sequence_ids"])
-    tmp_eval_dataset = eval_dataset.remove_columns(["example_id","word_ids","sequence_ids"])
+    tmp_train_dataset = train_dataset.remove_columns(["example_id", "word_ids", "sequence_ids"])
+    tmp_eval_dataset = eval_dataset.remove_columns(["example_id", "word_ids", "sequence_ids"])
 
     # Run without Trainer
 
@@ -643,7 +641,6 @@ def main():
     all_p = [i for x in all_p for i in x]
     all_span_p = np.concatenate(all_span_p)
 
-
     # Post processing
     features = eval_dataset
     examples = eval_examples
@@ -690,7 +687,7 @@ def main():
             )
 
         previous_word_idx = -1
-        ignored_index = [] # Some example tokens will be disappear after tokenization.
+        ignored_index = []  # Some example tokens will be disappear after tokenization.
         valid_labels = []
         valid_confs = []
         valid_nums = sum(list(map(lambda x: x['nums'], prelim_predictions)))
@@ -705,14 +702,14 @@ def main():
             while sequence_ids[token_start_index] != 1:
                 token_start_index += 1
 
-            for word_idx,label,conf in list(zip(word_ids,labels,confs))[token_start_index:]:
+            for word_idx, label, conf in list(zip(word_ids, labels, confs))[token_start_index:]:
                 # Special tokens have a word id that is None. We set the label to -100 so they are automatically
                 # ignored in the loss function.
                 if word_idx is None:
                     continue
                 # We set the label for the first token of each word.
                 elif word_idx > previous_word_idx:
-                    ignored_index += range(previous_word_idx+1,word_idx)
+                    ignored_index += range(previous_word_idx + 1, word_idx)
                     valid_labels.append(label)
                     valid_confs.append(str(conf))
                     previous_word_idx = word_idx
@@ -723,7 +720,7 @@ def main():
 
         context = example["context"]
         for i in ignored_index[::-1]:
-            context = context[:i] + context[i+1:]
+            context = context[:i] + context[i + 1:]
         assert len(context) == len(valid_labels) == len(valid_confs)
 
         predict_entities = get_entities(valid_labels, context)
@@ -734,19 +731,20 @@ def main():
         all_confs[example['id']] = confidence
         all_nums[example["id"]] = valid_nums
 
-
     # Evaluate on valid
     golds = read_gold(os.path.join(data_args.data_dir, "valid.json"))
     print(multi_span_evaluate(all_predictions, golds))
     # Span adjustment
     for key in all_predictions.keys():
-        if len(all_predictions[key]) > math.ceil(all_nums[key]*21):
+        if len(all_predictions[key]) > math.ceil(all_nums[key] * 21):
             confs = list(map(lambda x: max([float(y) for y in x.split()]), all_confs[key]))
-            new_preds = sorted(zip(all_predictions[key],confs), key=lambda x: x[1], reverse=True)[:math.ceil(all_nums[key]*21)]
+            new_preds = sorted(zip(all_predictions[key], confs), key=lambda x: x[1], reverse=True)[
+                        :math.ceil(all_nums[key] * 21)]
             new_preds = [x[0] for x in new_preds]
             all_predictions[key] = new_preds
     # Evaluate again
     print(multi_span_evaluate(all_predictions, golds))
+
 
 if __name__ == "__main__":
     main()

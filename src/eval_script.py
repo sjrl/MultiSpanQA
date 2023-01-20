@@ -1,4 +1,4 @@
-# Script for MultiSpanQA evaluation
+"""Script for MultiSpanQA evaluation"""
 import re
 import json
 import string
@@ -215,7 +215,6 @@ def multi_span_evaluate(preds: Dict[List[str]], golds: Dict[List[str]]):
 
 
 # ------------ START: This part is for nbest predictions with confidence ---------- #
-
 def eval_with_nbest_preds(nbest_file, gold_file):
     """ To use this part, check nbest output format of huggingface qa script """
     best_threshold, _ = find_best_threshold(nbest_file, gold_file)

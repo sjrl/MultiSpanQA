@@ -36,7 +36,7 @@ Since the QA model is single-span model, you need to change MultiSpanQA to the f
 python generate_squad_format.py
 ```
 
-This will generate two train files in squad formet. You can choose to fine-tune BERT on one of them (for example v1) using:
+This will generate two train files in squad format. You can choose to fine-tune BERT on one of them (for example v1) using:
 
 ```bash
 python run_squad.py \

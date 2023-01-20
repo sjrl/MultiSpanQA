@@ -1,6 +1,9 @@
+#!/bin/bash
 python src/run_tagger.py \
     --model_name_or_path bert-base-uncased \
     --data_dir ./data/MultiSpanQA_data \
+    --train_file train.json \
+    --validation_file valid.json \
     --output_dir ./output \
     --overwrite_output_dir \
     --overwrite_cache \

@@ -143,32 +143,31 @@ def compute_scores(
 def count_overlap(gold: set, pred: set):
     """Count the overlap of the gold answer and the predicted answer.
 
-    :param gold: Set of gold answers
-    :param pred: Set of predicted answers
+    :param gold: Set of gold answers.
+    :param pred: Set of predicted answers.
     """
     # Correct no answer prediction
     if len(gold) == 0 and (len(pred) == 0 or pred == {""}):
         return 1, 1
-
     # Incorrect no answer prediction
     elif len(gold) == 0 or (len(pred) == 0 or pred == {""}):
         return 0, 0
 
     # NOTE: Since it is possible to return multiple spans it is not clear which spans from pred should be compared to
     #       each span in gold. So all are compared and the highest precision and recall are taken.
-    p_scores = np.zeros((len(gold), len(pred)))
-    r_scores = np.zeros((len(gold), len(pred)))
+    precision_scores = np.zeros((len(gold), len(pred)))
+    recall_scores = np.zeros((len(gold), len(pred)))
     for i, gold_str in enumerate(gold):
         for j, pred_str in enumerate(pred):
             seq_matcher = difflib.SequenceMatcher(None, gold_str, pred_str)
             _, _, longest_len = seq_matcher.find_longest_match(0, len(gold_str), 0, len(pred_str))
-            p_scores[i][j] = longest_len/len(pred_str) if longest_len > 0 else 0
-            r_scores[i][j] = longest_len/len(gold_str) if longest_len > 0 else 0
+            precision_scores[i][j] = longest_len / len(pred_str) if longest_len > 0 else 0
+            recall_scores[i][j] = longest_len / len(gold_str) if longest_len > 0 else 0
 
-    p_score = sum(np.max(p_scores, axis=0))
-    r_score = sum(np.max(r_scores, axis=1))
+    precision_score = sum(np.max(precision_scores, axis=0))
+    recall_score = sum(np.max(recall_scores, axis=1))
 
-    return p_score, r_score
+    return precision_score, recall_score
 
 
 def read_gold(gold_file: str):

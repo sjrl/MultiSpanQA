@@ -5,7 +5,7 @@ import string
 import difflib
 import warnings
 import numpy as np
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Literal
 
 
 def get_entities(label, token):
@@ -90,45 +90,54 @@ def normalize_answer(s):
     return white_space_fix(remove_articles(remove_punc(lower(s))))
 
 
-def compute_scores(golds: Dict[Set[str]], preds: Dict[Set[str]], eval_type: str = 'em', average: str = 'micro'):
+def compute_scores(
+    golds: Dict[Set[str]],
+    preds: Dict[Set[str]],
+    eval_type: Literal["em", "overlap"] = "em",
+    average: str = 'micro'
+):
     """Compute precision, recall and exact match (or f1) metrics.
 
-    :param golds: dictionary of gold XX
-    :param preds: dictionary of predictions
+    :param golds: dictionary of gold answers
+    :param preds: dictionary of predicted answers
     :param eval_type: Evaluation type. Can be either "em" or "overlap".
+    :param average:
     """
-    nb_gold = 0
-    nb_pred = 0
-    nb_correct = 0
-    nb_correct_p = 0
-    nb_correct_r = 0
+    if eval_type not in {"em", "overlap"}:
+        raise ValueError(f"{eval_type} is not a valid input for `eval_type`, please specify either em or overlap")
+
+    n_gold = 0
+    n_predicted = 0
+    n_correct = 0
+    sum_precision = 0
+    sum_recall = 0
     for keys in list(golds.keys()):
         gold = golds[keys]
         pred = preds[keys]
-        nb_gold += max(len(gold), 1)
-        nb_pred += max(len(pred), 1)
+        n_gold += max(len(gold), 1)
+        n_predicted += max(len(pred), 1)
         if eval_type == 'em':
             if len(gold) == 0 and len(pred) == 0:
                 # Exact match no answer case
-                nb_correct += 1
+                n_correct += 1
             else:
                 # Exact match comparison between two sets
-                nb_correct += len(gold.intersection(pred))
-        else:
-            p_score, r_score = count_overlap(gold, pred)
-            nb_correct_p += p_score
-            nb_correct_r += r_score
+                n_correct += len(gold.intersection(pred))
+        elif eval_type == "overlap":
+            precision_score, recall_score = count_overlap(gold, pred)
+            sum_precision += precision_score
+            sum_recall += recall_score
 
     if eval_type == 'em':
-        p = nb_correct / nb_pred if nb_pred > 0 else 0
-        r = nb_correct / nb_gold if nb_gold > 0 else 0
-    else:
-        p = nb_correct_p / nb_pred if nb_pred > 0 else 0
-        r = nb_correct_r / nb_gold if nb_gold > 0 else 0
+        precision = n_correct / n_predicted if n_predicted > 0 else 0
+        recall = n_correct / n_gold if n_gold > 0 else 0
+    elif eval_type == "overlap":
+        precision = sum_precision / n_predicted if n_predicted > 0 else 0
+        recall = sum_recall / n_gold if n_gold > 0 else 0
 
-    f = 2 * p * r / (p + r) if p + r > 0 else 0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
 
-    return p, r, f
+    return precision, recall, f1
 
 
 def count_overlap(gold: set, pred: set):
@@ -162,10 +171,10 @@ def count_overlap(gold: set, pred: set):
     return p_score, r_score
 
 
-def read_gold(gold_file):
-    """Read the gold file
+def read_gold(gold_file: str):
+    """Read the gold file.
 
-    :param gold_file: file path to the file with the golden answers
+    :param gold_file: The file path to the file with the golden answers.
     """
     with open(gold_file) as f:
         data = json.load(f)['data']
@@ -175,17 +184,22 @@ def read_gold(gold_file):
     return golds
 
 
-def read_pred(pred_file):
-    """Read the prediction file
+def read_pred(pred_file: str):
+    """Read the prediction file.
 
-    :param pred_file: file path to the prediction file
+    :param pred_file: The file path to a prediction file.
     """
     with open(pred_file) as f:
         preds = json.load(f)
     return preds
 
 
-def multi_span_evaluate_from_file(pred_file, gold_file):
+def multi_span_evaluate_from_file(pred_file: str, gold_file: str):
+    """Evaluate the predictions of a MultiSpan QA model from a `pred_file` and a `gold_file`
+
+    :param pred_file: The file name of the prediction file.
+    :param gold_file: The file name of hte gold answers file.
+    """
     preds = read_pred(pred_file)
     golds = read_gold(gold_file)
     result = multi_span_evaluate(preds, golds)
@@ -193,24 +207,31 @@ def multi_span_evaluate_from_file(pred_file, gold_file):
 
 
 def multi_span_evaluate(preds: Dict[List[str]], golds: Dict[List[str]]):
+    """Evaluate the predictions of a MultiSpan QA model.
+
+    :param preds: A dictionary of predictions.
+    :param golds: A dictionary of gold answers.
+    """
     assert len(preds) == len(golds)
     assert preds.keys() == golds.keys()
 
     # Normalize the answer
-    for k, v in golds.items():
-        golds[k] = set(map(lambda x: normalize_answer(x), v))
-    for k, v in preds.items():
-        preds[k] = set(map(lambda x: normalize_answer(x), v))
+    for key, val in golds.items():
+        golds[key] = set(map(lambda x: normalize_answer(x), val))
+    for key, val in preds.items():
+        preds[key] = set(map(lambda x: normalize_answer(x), val))
 
     # Evaluate
-    em_p, em_r, em_f = compute_scores(golds, preds, eval_type='em')  # type: ignore
-    overlap_p, overlap_r, overlap_f = compute_scores(golds, preds, eval_type='overlap')  # type: ignore
-    result = {'exact_match_precision': 100 * em_p,
-              'exact_match_recall': 100 * em_r,
-              'exact_match_f1': 100 * em_f,
-              'overlap_precision': 100 * overlap_p,
-              'overlap_recall': 100 * overlap_r,
-              'overlap_f1': 100 * overlap_f}
+    em_precision, em_recall, em_f1 = compute_scores(golds, preds, eval_type='em')  # type: ignore
+    overlap_precision, overlap_recall, overlap_f1 = compute_scores(golds, preds, eval_type='overlap')  # type: ignore
+    result = {
+        'exact_match_precision': 100 * em_precision,
+        'exact_match_recall': 100 * em_recall,
+        'exact_match_f1': 100 * em_f1,
+        'overlap_precision': 100 * overlap_precision,
+        'overlap_recall': 100 * overlap_recall,
+        'overlap_f1': 100 * overlap_f1
+    }
     return result
 
 

@@ -26,15 +26,13 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 import datasets
-from datasets import load_dataset, load_metric
+from datasets import load_dataset
 
 import transformers
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
     AutoTokenizer,
-    DataCollatorWithPadding,
-    EvalPrediction,
     HfArgumentParser,
     PreTrainedTokenizerFast,
     TrainingArguments,

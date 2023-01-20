@@ -16,9 +16,7 @@
 Trainer for question answering.
 """
 
-import os
-import re
-from typing import Optional, Tuple, List, Union, Dict, Any
+from typing import List
 from transformers import Trainer
 
 

@@ -4,19 +4,17 @@ import logging
 import collections
 from tqdm.auto import tqdm
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, List, Union, Dict, Any
+from typing import Optional, Tuple
 
 import torch
-import numpy as np
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss, MSELoss
+from torch.nn import CrossEntropyLoss
 import datasets
-from datasets import load_dataset, load_metric
+from datasets import load_dataset
 
 import transformers
 from transformers import (
     AutoConfig,
-    AutoModelForQuestionAnswering,
     AutoTokenizer,
     DataCollatorForTokenClassification,
     HfArgumentParser,
@@ -38,6 +36,8 @@ logger = logging.getLogger(__name__)
 os.environ["WANDB_DISABLED"] = "true"
 
 
+# TODO Replace with a BertForTokenClassifcation
+#  https://huggingface.co/docs/transformers/model_doc/bert#transformers.BertForTokenClassification
 class TaggerForMultiSpanQA(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -55,7 +55,6 @@ class TaggerForMultiSpanQA(BertPreTrainedModel):
         token_type_ids=None,
         labels=None,
     ):
-
         outputs = self.bert(
             input_ids,
             attention_mask=attention_mask,
@@ -66,7 +65,7 @@ class TaggerForMultiSpanQA(BertPreTrainedModel):
         sequence_output = self.dropout(sequence_output)
         logits = self.classifier(sequence_output)
 
-        outputs = (logits, ) + outputs[:]
+        outputs = (logits,) + outputs[:]
         if labels is not None:
             loss_fct = CrossEntropyLoss()
             # Only keep active parts of the loss
@@ -85,36 +84,30 @@ def postprocess_tagger_predictions(
     examples,
     features,
     predictions: Tuple[np.ndarray, np.ndarray],
-    id2label,
-    n_best_size: int = 20,
-    max_answer_length: int = 30,
+    id2label: Dict[int, str],
     output_dir: Optional[str] = None,
     prefix: Optional[str] = None,
     log_level: Optional[int] = logging.WARNING,
-    save_embeds = False,
+    save_embeds: bool = False,
 ):
     """
     Post-processes the predictions of a question-answering model to convert them to answers that are substrings of the
     original contexts. This is the base postprocessing functions for models that only return start and end logits.
 
-    Args:
-        examples: The non-preprocessed dataset (see the main script for more information).
-        features: The processed dataset (see the main script for more information).
-        predictions (:obj:`Tuple[np.ndarray, np.ndarray]`):
-            The predictions of the model: two arrays containing the start logits and the end logits respectively. Its
-            first dimension must match the number of elements of :obj:`features`.
-        output_dir (:obj:`str`, `optional`):
-            If provided, the dictionaries of predictions, n_best predictions (with their scores and logits) and, if
-            :obj:`version_2_with_negative=True`, the dictionary of the scores differences between best and null
-            answers, are saved in `output_dir`.
-        prefix (:obj:`str`, `optional`):
-            If provided, the dictionaries mentioned above are saved with `prefix` added to their names.
-        log_level (:obj:`int`, `optional`, defaults to ``logging.WARNING``):
-            ``logging`` log level (e.g., ``logging.WARNING``)
+    :param examples: The non-preprocessed dataset (see the main script for more information).
+    :param features: The processed dataset (see the main script for more information).
+    :param predictions: The predictions of the model: two arrays containing the start logits and the end logits
+        respectively. Its first dimension must match the number of elements of :obj:`features`.
+    :param id2label: Dictionary lookup to convert id to label.
+    :param output_dir: If provided, the dictionaries of predictions, n_best predictions (with their scores and logits)
+        and, if :obj:`version_2_with_negative=True`, the dictionary of the scores differences between best and null
+        answers, are saved in `output_dir`.
+    :param prefix: If provided, the dictionaries mentioned above are saved with `prefix` added to their names.
+    :param log_level: ``logging`` log level (the default is ``logging.WARNING``)
+    :param save_embeds: If True save the logits and hidden states to numpy files.
     """
 
-    # print(len(predictions),predictions)
-    if len(predictions[0].shape) != 1: # Not CRF output
+    if len(predictions[0].shape) != 1:  # Not CRF output
         if predictions[0].shape[-1] != 3:
             raise RuntimeError(f"`predictions` should be in shape of (max_seq_length, 3).")
         all_logits = predictions[0]
@@ -186,14 +179,14 @@ def postprocess_tagger_predictions(
             while sequence_ids[token_start_index] != 1:
                 token_start_index += 1
 
-            for word_idx, label, lo, hi in list(zip(word_ids,labels,logits,hidden))[token_start_index:]:
+            for word_idx, label, lo, hi in list(zip(word_ids, labels, logits, hidden))[token_start_index:]:
                 # Special tokens have a word id that is None. We set the label to -100 so they are automatically
                 # ignored in the loss function.
                 if word_idx is None:
                     continue
                 # We set the label for the first token of each word.
                 elif word_idx > previous_word_idx:
-                    ignored_index += range(previous_word_idx+1, word_idx)
+                    ignored_index += range(previous_word_idx + 1, word_idx)
                     valid_labels.append(label)
                     valid_logits.append(lo)
                     valid_hidden.append(hi)
@@ -205,7 +198,7 @@ def postprocess_tagger_predictions(
 
         context = example["context"]
         for i in ignored_index[::-1]:
-            context = context[:i] + context[i+1:]
+            context = context[:i] + context[i + 1:]
         assert len(context) == len(valid_labels)
 
         predict_entities = get_entities(valid_labels, context)
@@ -240,10 +233,9 @@ def postprocess_tagger_predictions(
 
         logits_file = os.path.join(output_dir, "logits.np" if prefix is None else f"{prefix}_logits.np")
         hidden_file = os.path.join(output_dir, "hidden.np" if prefix is None else f"{prefix}_hidden.np")
-        with open(logits_file, "wb") as f1:
-            np.save(f1, all_valid_logits)
-        with open(hidden_file, "wb") as f1:
-            np.save(f1, all_valid_hidden)
+
+        np.save(logits_file, all_valid_logits)
+        np.save(hidden_file, all_valid_hidden)
 
     return prediction_file
 
@@ -271,7 +263,10 @@ class ModelArguments:
         default="main",
         metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
     )
-    use_auth_token: bool = field(default=False)
+    use_auth_token: bool = field(
+        default=False,
+        metadata={"help": "Set to True to if loading private models from HuggingFace Hub."},
+    )
 
 
 @dataclass
@@ -280,20 +275,29 @@ class DataTrainingArguments:
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
 
-    task_name: Optional[str] = field(default="ner", metadata={"help": "The name of the task (ner, pos...)."})
-    data_dir: Optional[str] = field(
-        default=None, metadata={"help": "The dir of the dataset to use."}
+    # NOTE: Not used at the moment
+    # task_name: Optional[str] = field(
+    #     default="ner", metadata={"help": "The name of the task (ner, pos...)."}
+    # )
+    data_dir: str = field(
+        default="data/MultiSpanQA_data", metadata={"help": "The dir of the dataset to use."}
     )
-    train_file: Optional[str] = field(
-        default='train.json', metadata={"help": "The dir of the dataset to use."}
+    train_file: str = field(
+        default='train.json', metadata={"help": "The name of the training file to use."}
     )
-    question_column_name: Optional[str] = field(
+    validation_file: str = field(
+        default='valid.json', metadata={"help": "The name of the validation file to use."}
+    )
+    test_file: str = field(
+        default='test.json', metadata={"help": "The name of the test file to use."}
+    )
+    question_column_name: str = field(
         default='question', metadata={"help": "The column name of text to input in the file (a csv or JSON file)."}
     )
-    context_column_name: Optional[str] = field(
+    context_column_name: str = field(
         default='context', metadata={"help": "The column name of text to input in the file (a csv or JSON file)."}
     )
-    label_column_name: Optional[str] = field(
+    label_column_name: str = field(
         default='label', metadata={"help": "The column name of label to input in the file (a csv or JSON file)."}
     )
     overwrite_cache: bool = field(
@@ -303,14 +307,15 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
-    max_num_span: int = field(
-        default=None,
-    )
+    # NOTE: Not used at the moment
+    # max_num_span: int = field(
+    #     default=None,
+    # )
     max_seq_length: int = field(
         default=None,
         metadata={
             "help": "The maximum total input sequence length after tokenization. If set, sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
+                    "than this will be truncated, sequences shorter will be padded."
         },
     )
     doc_stride: int = field(
@@ -320,7 +325,7 @@ class DataTrainingArguments:
         default=False,
         metadata={
             "help": "Whether to put the label for one word on all tokens of generated by that word or just on the "
-            "one (in which case the other tokens will have a padding index)."
+                    "one (in which case the other tokens will have a padding index)."
         },
     )
     save_embeds: bool = field(
@@ -343,8 +348,8 @@ class DataTrainingArguments:
         default=False,
         metadata={
             "help": "Whether to pad all samples to model maximum sentence length. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
-            "efficient on GPU but very bad for TPU."
+                    "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
+                    "efficient on GPU but very bad for TPU."
         },
     )
 
@@ -394,9 +399,9 @@ def main():
     set_seed(training_args.seed)
 
     data_files = {'train': os.path.join(data_args.data_dir, data_args.train_file),
-                  'validation': os.path.join(data_args.data_dir, "valid.json")}
+                  'validation': os.path.join(data_args.data_dir, data_args.validation_file)}
     if training_args.do_predict:
-        data_files['test'] = os.path.join(data_args.data_dir, "test.json")
+        data_files['test'] = os.path.join(data_args.data_dir, data_args.test_file)
 
     raw_datasets = load_dataset('json', field='data', data_files=data_files)
 
@@ -404,8 +409,8 @@ def main():
     context_column_name = data_args.context_column_name
     label_column_name = data_args.label_column_name
 
-    structure_list = ['Complex', 'Conjunction', 'Non-Redundant', 'Redundant', 'Share', '']
-    structure_to_id = {l: i for i, l in enumerate(structure_list)}
+    # structure_list = ['Complex', 'Conjunction', 'Non-Redundant', 'Redundant', 'Share', '']
+    # structure_to_id = {l: i for i, l in enumerate(structure_list)}
 
     label_list = ["B", "I", "O"]
     label2id = {l: i for i, l in enumerate(label_list)}
@@ -417,7 +422,7 @@ def main():
         num_labels=num_labels,
         label2id=label2id,
         id2label=id2label,
-        finetuning_task=data_args.task_name,
+        finetuning_task="ner",
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
@@ -461,7 +466,10 @@ def main():
     # Padding strategy
     padding = "max_length" if data_args.pad_to_max_length else False
 
-    max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
+    if data_args.max_seq_length is not None:
+        max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
+    else:
+        max_seq_length = tokenizer.model_max_length
 
     # Training preprocessing
     def prepare_train_features(examples):
@@ -526,9 +534,9 @@ def main():
             tokenized_examples["labels"].append(label_ids)
             # tokenized_examples["num_span"].append(examples['num_span'][sample_index] / data_args.max_num_span)
 
-            tokenized_examples["structure"].append(
-                structure_to_id[examples['structure'][sample_index] if 'structure' in examples else '']
-            )
+            # tokenized_examples["structure"].append(
+            #     structure_to_id[examples['structure'][sample_index] if 'structure' in examples else '']
+            # )
             tokenized_examples["example_id"].append(examples["id"][sample_index])
             tokenized_examples["word_ids"].append(word_ids)
             tokenized_examples["sequence_ids"].append(sequence_ids)
@@ -671,12 +679,12 @@ def main():
         trainer.save_metrics(split="train", metrics=metrics)
         trainer.save_state()
     else:
-        model.load_state_dict(torch.load(os.path.join(training_args.output_dir,'pytorch_model.bin')))
+        model.load_state_dict(torch.load(os.path.join(training_args.output_dir, 'pytorch_model.bin')))
         trainer.model = model
 
     if data_args.save_embeds:
         logger.info("*** Evaluate on Train ***")
-        metrics = trainer.evaluate(eval_dataset=train_dataset, eval_examples=train_examples,  metric_key_prefix="train")
+        metrics = trainer.evaluate(eval_dataset=train_dataset, eval_examples=train_examples, metric_key_prefix="train")
         metrics["train_samples"] = len(train_examples)
         trainer.log_metrics(split="train", metrics=metrics)
 

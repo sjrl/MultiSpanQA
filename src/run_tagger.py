@@ -98,7 +98,7 @@ class DataTrainingArguments:
     )
     # NOTE: Not used at the moment
     max_num_span: int = field(
-        default=None,
+        default=1,
     )
     max_seq_length: int = field(
         default=None,

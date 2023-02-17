@@ -97,9 +97,9 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
     # NOTE: Not used at the moment
-    # max_num_span: int = field(
-    #     default=None,
-    # )
+    max_num_span: int = field(
+        default=None,
+    )
     max_seq_length: int = field(
         default=None,
         metadata={

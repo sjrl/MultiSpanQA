@@ -202,8 +202,9 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    data_files = {'train': os.path.join(data_args.data_dir, data_args.train_file),
-                  'validation': os.path.join(data_args.data_dir, data_args.validation_file)}
+    data_files = {'train': os.path.join(data_args.data_dir, data_args.train_file)}
+    if training_args.do_eval:
+        data_files['validation'] = os.path.join(data_args.data_dir, data_args.validation_file)
     if training_args.do_predict:
         data_files['test'] = os.path.join(data_args.data_dir, data_args.test_file)
 

@@ -206,7 +206,7 @@ def multi_span_evaluate_from_file(pred_file: str, gold_file: str):
     return result
 
 
-def multi_span_evaluate(preds: Dict[str, List[str]], golds: Dict[str, List[str]]):
+def multi_span_evaluate(preds: Dict[str, List[str]], golds: Dict[str, Set[str]]):
     """Evaluate the predictions of a MultiSpan QA model.
 
     :param preds: A dictionary of predictions.

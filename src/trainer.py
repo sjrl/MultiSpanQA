@@ -16,8 +16,9 @@
 Trainer for question answering.
 """
 
-from typing import List
+from typing import List, Dict, Optional, Callable
 from transformers import Trainer
+from torch.utils.data import Dataset
 
 
 def get_labels() -> List[str]:

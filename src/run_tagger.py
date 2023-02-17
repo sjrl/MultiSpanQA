@@ -17,16 +17,16 @@ from transformers import (
     PreTrainedTokenizerFast,
     TrainingArguments,
     set_seed,
+    Trainer
 )
 from transformers.trainer_utils import get_last_checkpoint
 
 from src.multispan_qa import TaggerForMultiSpanQA, postprocess_tagger_predictions
+from src.eval_script import read_pred, read_gold
 from src.trainer import QuestionAnsweringTrainer
-from src.eval_script import multi_span_evaluate_from_file
+from src.eval_script import multi_span_evaluate_from_file, multi_span_evaluate
 
 logger = logging.getLogger(__name__)
-
-os.environ["WANDB_DISABLED"] = "true"
 
 
 @dataclass
@@ -109,6 +109,9 @@ class DataTrainingArguments:
     )
     doc_stride: int = field(
         default=128,
+        metadata={
+            "help": "TODO"
+        }
     )
     label_all_tokens: bool = field(
         default=False,
@@ -119,6 +122,9 @@ class DataTrainingArguments:
     )
     save_embeds: bool = field(
         default=False,
+        metadata={
+            "help": "TODO"
+        }
     )
     return_entity_level_metrics: bool = field(
         default=False,
@@ -126,12 +132,21 @@ class DataTrainingArguments:
     )
     max_train_samples: Optional[int] = field(
         default=None,
+        metadata={
+            "help": "Restrict the number of training samples. Useful for debugging runs."
+        }
     )
     max_eval_samples: Optional[int] = field(
         default=None,
+        metadata={
+            "help": "Restrict the number of evaluation samples."
+        }
     )
     max_predict_samples: Optional[int] = field(
         default=None,
+        metadata={
+            "help": "Restrict the number of prediction (test) samples."
+        }
     )
     pad_to_max_length: bool = field(
         default=False,
@@ -434,6 +449,30 @@ def main():
         )
         return pred_file
 
+    # TODO Use the regular HF trainer with the updated compute_multi_span_metrics
+    #      Will need to make sure preds and labels are in a format that can be used by multi_span_evaluate
+    # def compute_multi_span_metrics(eval_preds):
+    #     """Evaluate the predictions of a MultiSpan QA model from a `pred_file` and a `gold_file`
+    #     """
+    #     preds, labels = eval_preds
+    #
+    #     pred_file = post_processing_function(eval_examples, eval_dataset, preds, "train")
+    #     preds = read_pred(pred_file)
+    #     golds = labels
+    #     result = multi_span_evaluate(preds, golds)
+    #     return result
+    #
+    # trainer = Trainer(
+    #     model=model,
+    #     args=training_args,
+    #     train_dataset=train_dataset if training_args.do_train else None,
+    #     eval_dataset=eval_dataset if training_args.do_eval else None,
+    #     eval_dataset=eval_dataset if training_args.do_eval else None,
+    #     tokenizer=tokenizer,
+    #     data_collator=data_collator,
+    #     compute_metrics=compute_multi_span_metrics,
+    # )
+
     # Initialize our Trainer
     trainer = QuestionAnsweringTrainer(
         model=model,
@@ -489,6 +528,8 @@ def main():
     if training_args.do_predict:
         logger.info("*** Predict ***")
         metrics = trainer.predict(predict_dataset, predict_examples)
+        # TODO To use with the regular HF trainer
+        # metrics = trainer.predict(predict_dataset)
         metrics["predict_samples"] = len(predict_examples)
         trainer.log_metrics(split="predict", metrics=metrics)
         trainer.save_metrics(split="predict", metrics=metrics)

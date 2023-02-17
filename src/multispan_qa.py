@@ -3,7 +3,7 @@ import json
 import logging
 import collections
 from tqdm.auto import tqdm
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
 
 import torch
 import torch.nn as nn
@@ -66,15 +66,15 @@ class TaggerForMultiSpanQA(BertPreTrainedModel):
 
 
 def postprocess_tagger_predictions(
-    examples,
-    features,
+    examples: Dict,
+    features: Dict,
     predictions: Tuple[np.ndarray, np.ndarray],
     id2label: Dict[int, str],
     output_dir: Optional[str] = None,
     prefix: Optional[str] = None,
     log_level: Optional[int] = logging.WARNING,
     save_embeds: bool = False,
-):
+) -> str:
     """
     Post-processes the predictions of a question-answering model to convert them to answers that are substrings of the
     original contexts. This is the base postprocessing functions for models that only return start and end logits.
@@ -114,7 +114,7 @@ def postprocess_tagger_predictions(
         features_per_example[example_id_to_index[feature["example_id"]]].append(i)
 
     # The dictionaries we have to fill.
-    all_predictions = collections.OrderedDict()
+    all_predictions: Dict[str, List[str]] = collections.OrderedDict()
     all_ids = []
     all_valid_logits = []
     all_valid_hidden = []

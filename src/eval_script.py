@@ -5,7 +5,7 @@ import string
 import difflib
 import warnings
 import numpy as np
-from typing import Dict, List, Set, Literal, Union
+from typing import Dict, List, Set, Literal, Union, Tuple
 
 
 def get_entities(label: Union[List, List[List]], context: Union[List, List[List]]) -> List:
@@ -96,7 +96,7 @@ def compute_scores(
     preds: Dict[str, Set[str]],
     eval_type: Literal["em", "overlap"] = "em",
     average: str = 'micro'
-):
+) -> Tuple[float, float, float]:
     """Compute precision, recall and exact match (or f1) metrics.
 
     :param golds: dictionary of gold answers
@@ -141,7 +141,7 @@ def compute_scores(
     return precision, recall, f1
 
 
-def count_overlap(gold: set, pred: set):
+def count_overlap(gold: set, pred: set) -> Tuple[float, float]:
     """Count the overlap of the gold answer and the predicted answer.
 
     :param gold: Set of gold answers.

@@ -214,8 +214,8 @@ def main():
     context_column_name = data_args.context_column_name
     label_column_name = data_args.label_column_name
 
-    # structure_list = ['Complex', 'Conjunction', 'Non-Redundant', 'Redundant', 'Share', '']
-    # structure_to_id = {l: i for i, l in enumerate(structure_list)}
+    structure_list = ['Complex', 'Conjunction', 'Non-Redundant', 'Redundant', 'Share', '']
+    structure_to_id = {l: i for i, l in enumerate(structure_list)}
 
     label_list = ["B", "I", "O"]
     label2id = {l: i for i, l in enumerate(label_list)}
@@ -302,7 +302,7 @@ def main():
 
         # Let's label those examples!
         tokenized_examples["labels"] = []
-        # tokenized_examples["num_span"] = []
+        tokenized_examples["num_span"] = []
         tokenized_examples["structure"] = []
         tokenized_examples["example_id"] = []
         tokenized_examples["word_ids"] = []
@@ -337,11 +337,11 @@ def main():
                 previous_word_idx = word_idx
 
             tokenized_examples["labels"].append(label_ids)
-            # tokenized_examples["num_span"].append(examples['num_span'][sample_index] / data_args.max_num_span)
+            tokenized_examples["num_span"].append(examples['num_span'][sample_index] / data_args.max_num_span)
 
-            # tokenized_examples["structure"].append(
-            #     structure_to_id[examples['structure'][sample_index] if 'structure' in examples else '']
-            # )
+            tokenized_examples["structure"].append(
+                structure_to_id[examples['structure'][sample_index] if 'structure' in examples else '']
+            )
             tokenized_examples["example_id"].append(examples["id"][sample_index])
             tokenized_examples["word_ids"].append(word_ids)
             tokenized_examples["sequence_ids"].append(sequence_ids)
